@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Upstream Vaultwarden release built by this repo",
+      "managerFilePatterns": ["/^VERSION$/"],
+      "matchStrings": ["^(?<currentValue>\\S+)\\s*$"],
+      "depNameTemplate": "dani-garcia/vaultwarden",
+      "datasourceTemplate": "github-releases"
+    }
+  ]
+}
