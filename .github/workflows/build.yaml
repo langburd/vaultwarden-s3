@@ -1,0 +1,82 @@
+---
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/vaultwarden-s3
+  # Official images ship sqlite,mysql,postgresql; we need mysql + the s3 data folder backend.
+  FEATURES: mysql,s3,enable_mimalloc
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read version
+        id: version
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout upstream vaultwarden
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: dani-garcia/vaultwarden
+          ref: ${{ steps.version.outputs.version }}
+          path: upstream
+          persist-credentials: false
+
+      # The Rust build cross-compiles on the runner; QEMU is only needed for the
+      # runtime stage's `apk add`.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: upstream
+          file: upstream/docker/Dockerfile.alpine
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            DB=${{ env.FEATURES }}
+            VW_VERSION=${{ steps.version.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.description=Vaultwarden ${{ steps.version.outputs.version }} built with cargo features ${{ env.FEATURES }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+          tags: ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
+          push: ${{ github.event_name != 'pull_request' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
